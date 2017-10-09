@@ -54,6 +54,8 @@
 
 #include "tf/transform_broadcaster.h"
 
+#include <stage_ros/Wifi.h>
+
 #define USAGE "stageros <worldfile>"
 #define IMAGE "image"
 #define DEPTH "depth"
@@ -78,6 +80,7 @@ private:
     std::vector<Stg::ModelCamera *> cameramodels;
     std::vector<Stg::ModelRanger *> lasermodels;
     std::vector<Stg::ModelPosition *> positionmodels;
+    std::vector<Stg::ModelWifiRanger *> wifimodels;
 
     //a structure representing a robot inthe simulator
     struct StageRobot
@@ -106,6 +109,8 @@ private:
     ros::ServiceServer reset_srv_;
   
     ros::Publisher clock_pub_;
+
+    ros::Publisher wifi_pub_;
     
     bool isDepthCanonical;
     bool use_model_names;
@@ -240,6 +245,9 @@ StageNode::ghfunc(Stg::Model* mod, StageNode* node)
       node->positionmodels.push_back(p);
       node->initial_poses.push_back(p->GetGlobalPose());
     }
+  if (dynamic_cast<Stg::ModelWifiRanger *>(mod)) {
+     node->wifimodels.push_back(dynamic_cast<Stg::ModelWifiRanger *>(mod));
+  }
   if (dynamic_cast<Stg::ModelCamera *>(mod)) {
      node->cameramodels.push_back(dynamic_cast<Stg::ModelCamera *>(mod));
   }
@@ -325,6 +333,11 @@ StageNode::SubscribeModels()
 {
     n_.setParam("/use_sim_time", true);
 
+    for (size_t w = 0; w < this->wifimodels.size(); w++)
+    {
+        printf("subscribing to %s\n", this->wifimodels[w]->name().c_str());
+    }
+
     for (size_t r = 0; r < this->positionmodels.size(); r++)
     {
         const char* robot_name = "turtlebot";
@@ -398,6 +411,7 @@ StageNode::SubscribeModels()
         this->robotmodels_.push_back(new_robot);
     }
     clock_pub_ = n_.advertise<rosgraph_msgs::Clock>("/clock", 10);
+    wifi_pub_ = n_.advertise<stage_ros::Wifi>("/wifi", 10);
 
     // advertising reset service
     reset_srv_ = n_.advertiseService("reset_positions", &StageNode::cb_reset_srv, this);
@@ -415,6 +429,17 @@ bool
 StageNode::UpdateWorld()
 {
     return this->world->UpdateAll();
+}
+
+static std::string parent_name(const Stg::Model* model)
+{
+    Stg::Model* parent = model->Parent();
+    if (!parent)
+    {
+        return "";
+    }
+
+    return parent->name();
 }
 
 void
@@ -443,6 +468,22 @@ StageNode::WorldCallback()
     {
         for (size_t r = 0; r < this->positionmodels.size(); r++)
             this->positionmodels[r]->SetSpeed(0.0, 0.0, 0.0);
+    }
+
+    for (size_t w = 0; w < this->wifimodels.size(); ++w)
+    {
+        const Stg::ModelWifiRanger *wifi = this->wifimodels[w];
+
+        stage_ros::Wifi msg;
+        msg.station_name = parent_name(wifi);
+
+        std::set<Stg::ModelWifiRanger *>::iterator it;
+        for (it = wifi->wifis_in_range().begin(); it != wifi->wifis_in_range().end(); ++it)
+        {
+            msg.others.push_back(parent_name(*it));
+        }
+
+        wifi_pub_.publish(msg);
     }
 
     //loop on the robot models

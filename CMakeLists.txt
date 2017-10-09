@@ -4,6 +4,7 @@ project(stage_ros)
 find_package(catkin REQUIRED
   COMPONENTS
     geometry_msgs
+    message_generation
     nav_msgs
     roscpp
     sensor_msgs
@@ -22,7 +23,17 @@ include_directories(
   ${STAGE_INCLUDE_DIRS}
 )
 
-catkin_package()
+add_message_files(
+  FILES
+  Wifi.msg
+)
+
+generate_messages()
+
+catkin_package(
+  CATKIN_DEPENDS
+  message_runtime  
+)
 
 # Declare a cpp executable
 add_executable(stageros src/stageros.cpp)
@@ -39,6 +50,7 @@ target_link_libraries(stageros
 if(catkin_EXPORTED_TARGETS)
   add_dependencies(stageros ${catkin_EXPORTED_TARGETS})
 endif()
+add_dependencies(stageros stage_ros_generate_messages_cpp)
 
 ## Install
 
