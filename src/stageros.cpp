@@ -176,23 +176,23 @@ StageNode::mapName(const char *name, size_t robotID, Stg::Model* mod) const
     //ROS_INFO("Robot %lu: Device %s", robotID, name);
     bool umn = this->use_model_names;
 
-    if ((positionmodels.size() > 1 ) || umn)
-    {
-        static char buf[100];
-        std::size_t found = std::string(((Stg::Ancestor *) mod)->Token()).find(":");
-
-        if ((found==std::string::npos) && umn)
-        {
-            snprintf(buf, sizeof(buf), "/%s/%s", ((Stg::Ancestor *) mod)->Token(), name);
-        }
-        else
-        {
-            snprintf(buf, sizeof(buf), "/robot_%u/%s", (unsigned int)robotID, name);
-        }
-
-        return buf;
-    }
-    else
+//    if ((positionmodels.size() > 1 ) || umn)
+//    {
+//        static char buf[100];
+//        std::size_t found = std::string(((Stg::Ancestor *) mod)->Token()).find(":");
+//
+//        if ((found==std::string::npos) && umn)
+//        {
+//            snprintf(buf, sizeof(buf), "/%s/%s", ((Stg::Ancestor *) mod)->Token(), name);
+//        }
+//        else
+//        {
+//            snprintf(buf, sizeof(buf), "/robot_%u/%s", (unsigned int)robotID, name);
+//        }
+//
+//        return buf;
+//    }
+//    else
         return name;
 }
 
@@ -200,25 +200,25 @@ const char *
 StageNode::mapName(const char *name, size_t robotID, size_t deviceID, Stg::Model* mod) const
 {
     //ROS_INFO("Robot %lu: Device %s:%lu", robotID, name, deviceID);
-    bool umn = this->use_model_names;
-
-    if ((positionmodels.size() > 1 ) || umn)
-    {
-        static char buf[100];
-        std::size_t found = std::string(((Stg::Ancestor *) mod)->Token()).find(":");
-
-        if ((found==std::string::npos) && umn)
-        {
-            snprintf(buf, sizeof(buf), "/%s/%s_%u", ((Stg::Ancestor *) mod)->Token(), name, (unsigned int)deviceID);
-        }
-        else
-        {
-            snprintf(buf, sizeof(buf), "/robot_%u/%s_%u", (unsigned int)robotID, name, (unsigned int)deviceID);
-        }
-
-        return buf;
-    }
-    else
+//    bool umn = this->use_model_names;
+//
+//    if ((positionmodels.size() > 1 ) || umn)
+//    {
+//        static char buf[100];
+//        std::size_t found = std::string(((Stg::Ancestor *) mod)->Token()).find(":");
+//
+//        if ((found==std::string::npos) && umn)
+//        {
+//            snprintf(buf, sizeof(buf), "/%s/%s_%u", ((Stg::Ancestor *) mod)->Token(), name, (unsigned int)deviceID);
+//        }
+//        else
+//        {
+//            snprintf(buf, sizeof(buf), "/robot_%u/%s_%u", (unsigned int)robotID, name, (unsigned int)deviceID);
+//        }
+//
+//        return buf;
+//    }
+//    else
     {
         static char buf[100];
         snprintf(buf, sizeof(buf), "/%s_%u", name, (unsigned int)deviceID);
@@ -327,6 +327,12 @@ StageNode::SubscribeModels()
 
     for (size_t r = 0; r < this->positionmodels.size(); r++)
     {
+        const char* robot_name = "turtlebot";
+        if (this->positionmodels[r]->name() != robot_name)
+        {
+            continue;
+        }
+
         StageRobot* new_robot = new StageRobot;
         new_robot->positionmodel = this->positionmodels[r];
         new_robot->positionmodel->Subscribe();
