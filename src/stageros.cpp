@@ -111,6 +111,8 @@ private:
     ros::Publisher clock_pub_;
 
     ros::Publisher wifi_pub_;
+    std::vector<ros::Publisher> wifi_range_pubs_;
+    std::vector<ros::Subscriber> reposition_subs_;
     
     bool isDepthCanonical;
     bool use_model_names;
@@ -167,6 +169,9 @@ public:
     // Message callback for a MsgBaseVel message, which set velocities.
     void cmdvelReceived(int idx, const boost::shared_ptr<geometry_msgs::Twist const>& msg);
 
+    // Message collback to reposition a wifi adapter.
+    void repositionCallback(Stg::ModelWifiRanger *wifi, const boost::shared_ptr<geometry_msgs::Point const>& msg);
+
     // Service callback for soft reset
     bool cb_reset_srv(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
 
@@ -174,56 +179,54 @@ public:
     Stg::World* world;
 };
 
+static std::string parent_name(const Stg::Model* model)
+{
+    Stg::Model* parent = model->Parent();
+    if (!parent)
+    {
+        return "";
+    }
+
+    return parent->name();
+}
+
 // since stageros is single-threaded, this is OK. revisit if that changes!
 const char *
 StageNode::mapName(const char *name, size_t robotID, Stg::Model* mod) const
 {
-    //ROS_INFO("Robot %lu: Device %s", robotID, name);
-    bool umn = this->use_model_names;
-
-//    if ((positionmodels.size() > 1 ) || umn)
-//    {
-//        static char buf[100];
-//        std::size_t found = std::string(((Stg::Ancestor *) mod)->Token()).find(":");
-//
-//        if ((found==std::string::npos) && umn)
-//        {
-//            snprintf(buf, sizeof(buf), "/%s/%s", ((Stg::Ancestor *) mod)->Token(), name);
-//        }
-//        else
-//        {
-//            snprintf(buf, sizeof(buf), "/robot_%u/%s", (unsigned int)robotID, name);
-//        }
-//
-//        return buf;
-//    }
-//    else
+    if (robotID == 0)
+    {
         return name;
+    }
+   
+    static char buf[100];
+    snprintf(buf, sizeof(buf), "/robot_%s/%s", mod->name().c_str(), name);
+    return buf;
 }
 
 const char *
 StageNode::mapName(const char *name, size_t robotID, size_t deviceID, Stg::Model* mod) const
 {
     //ROS_INFO("Robot %lu: Device %s:%lu", robotID, name, deviceID);
-//    bool umn = this->use_model_names;
-//
-//    if ((positionmodels.size() > 1 ) || umn)
-//    {
-//        static char buf[100];
-//        std::size_t found = std::string(((Stg::Ancestor *) mod)->Token()).find(":");
-//
-//        if ((found==std::string::npos) && umn)
-//        {
-//            snprintf(buf, sizeof(buf), "/%s/%s_%u", ((Stg::Ancestor *) mod)->Token(), name, (unsigned int)deviceID);
-//        }
-//        else
-//        {
-//            snprintf(buf, sizeof(buf), "/robot_%u/%s_%u", (unsigned int)robotID, name, (unsigned int)deviceID);
-//        }
-//
-//        return buf;
-//    }
-//    else
+    bool umn = this->use_model_names;
+
+    if ((positionmodels.size() > 1 ) || umn)
+    {
+        static char buf[100];
+        std::size_t found = std::string(((Stg::Ancestor *) mod)->Token()).find(":");
+
+        if ((found==std::string::npos) && umn)
+        {
+            snprintf(buf, sizeof(buf), "/%s/%s_%u", ((Stg::Ancestor *) mod)->Token(), name, (unsigned int)deviceID);
+        }
+        else
+        {
+            snprintf(buf, sizeof(buf), "/robot_%u/%s_%u", (unsigned int)robotID, name, (unsigned int)deviceID);
+        }
+
+        return buf;
+    }
+    else
     {
         static char buf[100];
         snprintf(buf, sizeof(buf), "/%s_%u", name, (unsigned int)deviceID);
@@ -252,9 +255,6 @@ StageNode::ghfunc(Stg::Model* mod, StageNode* node)
      node->cameramodels.push_back(dynamic_cast<Stg::ModelCamera *>(mod));
   }
 }
-
-
-
 
 bool
 StageNode::cb_reset_srv(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response)
@@ -321,7 +321,6 @@ StageNode::StageNode(int argc, char** argv, bool gui, const char* fname, bool us
     this->world->ForEachDescendant((Stg::model_callback_t)ghfunc, this);
 }
 
-
 // Subscribe to models of interest.  Currently, we find and subscribe
 // to the first 'laser' model and the first 'position' model.  Returns
 // 0 on success (both models subscribed), -1 otherwise.
@@ -335,17 +334,17 @@ StageNode::SubscribeModels()
 
     for (size_t w = 0; w < this->wifimodels.size(); w++)
     {
-        printf("subscribing to %s\n", this->wifimodels[w]->name().c_str());
+        ROS_INFO("Subscribed to Stage wifi model \"%s\"\n", this->wifimodels[w]->name().c_str());
+
+        const std::string topic_name = "/wifis/" + parent_name(this->wifimodels[w]);
+        const std::string range_topic_name = topic_name + "/range";
+        const std::string reposition_topic_name = topic_name + "/reposition";
+        this->wifi_range_pubs_.push_back(n_.advertise<sensor_msgs::LaserScan>(range_topic_name, 10));
+        this->reposition_subs_.push_back(n_.subscribe<geometry_msgs::Point>(reposition_topic_name, 10, boost::bind(&StageNode::repositionCallback, this, this->wifimodels[w], _1)));
     }
 
     for (size_t r = 0; r < this->positionmodels.size(); r++)
     {
-        const char* robot_name = "turtlebot";
-        if (this->positionmodels[r]->name() != robot_name)
-        {
-            continue;
-        }
-
         StageRobot* new_robot = new StageRobot;
         new_robot->positionmodel = this->positionmodels[r];
         new_robot->positionmodel->Subscribe();
@@ -419,6 +418,14 @@ StageNode::SubscribeModels()
     return(0);
 }
 
+void StageNode::repositionCallback(Stg::ModelWifiRanger *wifi, const boost::shared_ptr<geometry_msgs::Point const>& msg)
+{
+    printf("reposition request for %s\n", parent_name(wifi).c_str());
+
+    Stg::Pose pose(msg->x, msg->y, 0.0, 0.0);
+    wifi->Parent()->SetPose(pose);
+}
+
 StageNode::~StageNode()
 {    
     for (std::vector<StageRobot const*>::iterator r = this->robotmodels_.begin(); r != this->robotmodels_.end(); ++r)
@@ -429,17 +436,6 @@ bool
 StageNode::UpdateWorld()
 {
     return this->world->UpdateAll();
-}
-
-static std::string parent_name(const Stg::Model* model)
-{
-    Stg::Model* parent = model->Parent();
-    if (!parent)
-    {
-        return "";
-    }
-
-    return parent->name();
 }
 
 void
@@ -474,6 +470,8 @@ StageNode::WorldCallback()
     {
         const Stg::ModelWifiRanger *wifi = this->wifimodels[w];
 
+        // Publish the other wifis that are in the range of the current one.
+
         stage_ros::Wifi msg;
         msg.station_name = parent_name(wifi);
 
@@ -484,6 +482,41 @@ StageNode::WorldCallback()
         }
 
         wifi_pub_.publish(msg);
+
+        // Publish the range of the current wifi.
+        const std::vector<Stg::ModelWifiRanger::Sensor>& sensors = wifi->GetSensors();
+        if(sensors.size() == 0 || sensors.size() > 1)
+        {
+            ROS_WARN("ROS Stage currently supports wifi rangers with 1 sensor only.");
+            continue;
+        }
+
+        const Stg::ModelWifiRanger::Sensor& sensor = sensors[0];
+        if (sensor.ranges.size())
+        {
+            size_t len = sensor.ranges.size();
+
+            // Translate into ROS message format and publish
+            sensor_msgs::LaserScan msg;
+            msg.angle_min = -sensor.fov / 2.0;
+            msg.angle_max = +sensor.fov / 2.0;
+            msg.angle_increment = sensor.fov/(double)(sensor.sample_count-1);
+            msg.range_min = sensor.range.min;
+            msg.range_max = sensor.range.max + 1;
+            msg.ranges.resize(len);
+            msg.intensities.resize(len);
+
+            for(unsigned int i = 0; i < len; i++)
+            {
+                msg.ranges[i] = sensor.ranges[i];
+                msg.intensities[i] = 1.0;
+            }
+
+            msg.header.frame_id = mapName("base_link", w, wifi->Parent());
+
+            msg.header.stamp = sim_time;
+            wifi_range_pubs_[w].publish(msg);
+        }
     }
 
     //loop on the robot models
